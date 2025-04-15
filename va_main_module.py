@@ -2,14 +2,15 @@ import cv2
 import numpy as np
 import torch
 from torchvision import transforms
+
 from VA_module.src.resnet import VA_Model
 from face_det_module.src.util import get_args_parser, get_transform, pre_trained_wegiths_load
 from face_det_module.src.face_crop import crop
 
+
 def compute_va_change_average(video_path):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # 모델 로드
     args = get_args_parser()
     args.transform = get_transform()
     args.weights_path = '/home/face/Desktop/LangAgent/VA_module/weights/best.pth'
@@ -19,7 +20,6 @@ def compute_va_change_average(video_path):
     model = pre_trained_wegiths_load(model, cp)
     model = model.to(device).eval()
 
-    # 전처리
     preprocess = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
@@ -29,20 +29,26 @@ def compute_va_change_average(video_path):
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        print(f"❌ Could not open video: {video_path}")
-        return
+        return {
+            "module": "va_change",
+            "status": "error",
+            "valence_change": None,
+            "arousal_change": None,
+            "valid_frames": 0,
+            "total_frames": 0
+        }
 
     prev_val, prev_aro = None, None
     val_diffs, aro_diffs = [], []
-
     frame_idx = 0
+
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        output_tensor, check, box = crop(frame, preprocess, 224, True, device=device)
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        output_tensor, check, box = crop(frame_rgb, preprocess, 224, True, device=device)
 
         if check:
             with torch.no_grad():
@@ -51,10 +57,8 @@ def compute_va_change_average(video_path):
                 aro = np.clip(pred_aro.item(), -1, 1)
 
             if prev_val is not None:
-                delta_val = abs(val - prev_val)
-                delta_aro = abs(aro - prev_aro)
-                val_diffs.append(delta_val)
-                aro_diffs.append(delta_aro)
+                val_diffs.append(abs(val - prev_val))
+                aro_diffs.append(abs(aro - prev_aro))
 
             prev_val, prev_aro = val, aro
 
@@ -63,17 +67,24 @@ def compute_va_change_average(video_path):
     cap.release()
 
     if len(val_diffs) == 0:
-        print("⚠️ 얼굴이 감지되지 않아 변화량 계산 불가.")
-        return None, None
+        return {
+            "module": "va_change",
+            "status": "no_face_detected",
+            "valence_change": None,
+            "arousal_change": None,
+            "valid_frames": 0,
+            "total_frames": frame_idx
+        }
 
-    mean_val_change = np.mean(val_diffs)
-    mean_aro_change = np.mean(aro_diffs)
+    return {
+        "module": "va_change",
+        "status": "success",
+        "valence_change": float(np.mean(val_diffs)),
+        "arousal_change": float(np.mean(aro_diffs)),
+        "valid_frames": len(val_diffs),
+        "total_frames": frame_idx
+    }
 
-    print(f"\n평균 Valence 변화량: {mean_val_change:.4f}")
-    print(f"평균 Arousal 변화량: {mean_aro_change:.4f}")
 
-    return mean_val_change, mean_aro_change
-
-
-video_path = '/home/face/Desktop/LangAgent/langchain_demo.mp4'
-val_avg, aro_avg = compute_va_change_average(video_path)
+# video_path = '/home/face/Desktop/LangAgent/langchain_demo.mp4'
+# print(compute_va_change_average(video_path))

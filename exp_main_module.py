@@ -1,9 +1,6 @@
 import cv2
-import json
 import torch
-import numpy as np
 from torchvision import transforms
-from torch.nn import Softmax
 from collections import defaultdict
 
 from EXP_module.src.model import NLA_r18
@@ -11,10 +8,10 @@ from EXP_module.src.utils import *
 from face_det_module.src.util import get_args_parser, get_transform
 from face_det_module.src.face_crop import crop
 
+
 def analyze_expression_changes(video_path):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Load model
     args = get_args_parser()
     args.transform = get_transform()
     args.weights_path = '/home/face/Desktop/LangAgent/EXP_module/weights/best.pth'
@@ -36,14 +33,16 @@ def analyze_expression_changes(video_path):
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        print(f"❌ Could not open video: {video_path}")
-        return
+        return {
+            "module": "expression_change",
+            "status": "error",
+            "expression_change_count": None,
+            "analyzed_frames": 0
+        }
 
     prev_label = None
     total_changes = 0
-    change_counter = defaultdict(int)
-
-    print(f"🎬 Processing video: {video_path}")
+    frame_idx = 0
 
     while True:
         ret, frame = cap.read()
@@ -61,19 +60,26 @@ def analyze_expression_changes(video_path):
                 pred_cls = torch.argmax(output, dim=1).item()
                 current_label = exp_dict[pred_cls]
 
-        # Check for label change
-        if prev_label is not None and current_label != prev_label:
+        if (
+            prev_label is not None and current_label != prev_label
+            and current_label != "No Face" and prev_label != "No Face"
+        ):
             total_changes += 1
-            change_counter[f"{prev_label} ➜ {current_label}"] += 1
 
         prev_label = current_label
+        frame_idx += 1
 
     cap.release()
 
-    # print(f"\n📊 Total Expression Changes: {total_changes}")
-    # print(json.dumps(change_counter, indent=2, ensure_ascii=False))
+    return {
+        "module": "expression_change",
+        "status": "success",
+        "expression_change_count": total_changes,
+        "analyzed_frames": frame_idx
+    }
 
-    return total_changes #, dict(change_counter)
 
 
-#print(analyze_expression_changes('/home/face/Desktop/LangAgent/langchain_demo.mp4'))
+
+video_path = '/home/face/Desktop/LangAgent/langchain_demo.mp4'
+print(analyze_expression_changes(video_path))
